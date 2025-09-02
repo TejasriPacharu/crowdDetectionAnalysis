@@ -1,0 +1,77 @@
+# Dataset directories
+UCF-QNRF_ECCV18/
+UCF-QNRF*/
+datasets/
+data/
+
+# Model outputs and checkpoints
+output/
+runs/
+*.pth
+*.pt
+*.onnx
+*.h5
+optimized_models/
+yolo_dataset/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Logs and databases
+*.log
+*.sqlite
+logs/
+tensorboard/
+events.out.tfevents.*
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# MATLAB files (from dataset annotations)
+*.mat
+
+# Temporary files
+temp/
+tmp/
