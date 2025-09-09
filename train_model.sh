@@ -1,19 +1,19 @@
 #!/bin/bash
 
 # Hybrid Crowd Counting Training Script
-# This script sets up the environment and trains the hybrid crowd counting model
+# This script trains the hybrid crowd counting model
 
 # Configuration
 DATASET_DIR="UCF-QNRF_ECCV18"
 OUTPUT_DIR="output"
 BATCH_SIZE=8
-EPOCHS=100  # Number of training epochs
+EPOCHS=30  # Number of training epochs
 LEARNING_RATE=1e-5
-DEVICE="cuda:0"  # Use "cpu" if no GPU is available
+DEVICE="cpu"  # Use "cpu" if no GPU is available
 NUM_WORKERS=4
 TRAIN_YOLO=true  # Set to false to skip YOLOv8 training
 YOLO_MODEL_SIZE="n"  # Options: n, s, m, l, x
-YOLO_EPOCHS=50
+YOLO_EPOCHS=15
 EXPORT_MODELS=true  # Set to false to skip model export
 
 # Colors for terminal output
@@ -21,23 +21,6 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
-
-# Create virtual environment if it doesn't exist
-if [ ! -d "venv" ]; then
-    echo -e "${BLUE}Creating virtual environment...${NC}"
-    python -m venv venv
-fi
-
-# Activate virtual environment
-echo -e "${BLUE}Activating virtual environment...${NC}"
-source venv/bin/activate
-
-# Install requirements if needed
-if [ ! -f "venv/requirements_installed" ]; then
-    echo -e "${BLUE}Installing requirements...${NC}"
-    pip install -r requirements.txt
-    touch venv/requirements_installed
-fi
 
 # Check if dataset exists
 if [ ! -d "$DATASET_DIR" ]; then
@@ -107,6 +90,3 @@ if [ $? -eq 0 ]; then
 else
     echo -e "${YELLOW}Training failed with exit code $?${NC}"
 fi
-
-# Deactivate virtual environment
-deactivate

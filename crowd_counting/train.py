@@ -7,6 +7,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import pandas as pd
+import matplotlib.pyplot as plt
+import csv
 
 # Import models
 from models.csrnet import csrnet
@@ -35,6 +38,15 @@ def train_csrnet(model, train_loader, optimizer, criterion, device, epoch, write
             
             # Forward pass
             outputs = model(images)
+            
+            # Resize outputs to match density maps if sizes don't match
+            if outputs.size(2) != density_maps.size(2) or outputs.size(3) != density_maps.size(3):
+                outputs = torch.nn.functional.interpolate(
+                    outputs,
+                    size=(density_maps.size(2), density_maps.size(3)),
+                    mode='bilinear',
+                    align_corners=False
+                )
             
             # Calculate loss
             loss = criterion(outputs, density_maps)
@@ -147,11 +159,36 @@ def validate(csrnet_model, classifier_model, yolo_counter, val_loader, device, e
                 if classifier_pred[i] > 0.5:  # Dense crowd
                     # Use CSRNet
                     density_map = csrnet_model(img)
+                    
+                    # Resize outputs to match density maps if sizes don't match
+                    if density_map.size(2) != density_maps.size(2) or density_map.size(3) != density_maps.size(3):
+                        density_map = torch.nn.functional.interpolate(
+                            density_map,
+                            size=(density_maps.size(2), density_maps.size(3)),
+                            mode='bilinear',
+                            align_corners=False
+                        )
+                        
                     count = density_map.sum().item()
                 else:  # Sparse crowd
                     # Use YOLOv8
-                    count, _ = yolo_counter.count(img.cpu().numpy(), device=device)
-                    count = count[0]  # Get count from list
+                    # Convert PyTorch tensor to proper format for YOLO
+                    # 1. Move to CPU if not already
+                    # 2. Convert from normalized tensor to PIL-compatible image
+                    # 3. Convert to proper shape for YOLO
+                    img_np = img.cpu().detach()
+                    
+                    # Denormalize the image (assuming ImageNet normalization)
+                    mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+                    std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+                    img_np = img_np * std + mean
+                    
+                    # Convert to numpy and proper format (0-255 uint8, HWC)
+                    img_np = (img_np.squeeze(0).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+                    
+                    # Pass to YOLO counter
+                    count, _ = yolo_counter.count(img_np, device=device)
+                    count = count[0] if count else 0  # Get count from list, default to 0 if empty
                 
                 pred_counts.append(count)
             
@@ -228,10 +265,10 @@ def main(args):
     
     # Define learning rate schedulers
     csrnet_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        csrnet_optimizer, mode='min', factor=0.5, patience=5, verbose=True
+        csrnet_optimizer, mode='min', factor=0.5, patience=3
     )
     classifier_scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-        classifier_optimizer, mode='min', factor=0.5, patience=5, verbose=True
+        classifier_optimizer, mode='min', factor=0.5, patience=3
     )
     
     # Define loss functions
@@ -250,9 +287,17 @@ def main(args):
         )
         print("YOLOv8 training completed")
     
+    # Prepare CSV file for metrics
+    metrics_file = os.path.join(args.output_dir, 'training_metrics.csv')
+    with open(metrics_file, 'w', newline='') as f:
+        writer_csv = csv.writer(f)
+        writer_csv.writerow(['Epoch', 'CSRNet_Loss', 'Classifier_Loss', 'Classifier_Accuracy', 'MAE', 'RMSE', 'Classifier_Val_Accuracy'])
+    
     # Training loop
     print("Starting training...")
     best_mae = float('inf')
+    patience = args.patience
+    patience_counter = 0
     
     for epoch in range(1, args.epochs + 1):
         # Train CSRNet
@@ -288,6 +333,11 @@ def main(args):
             writer=writer
         )
         
+        # Save metrics to CSV
+        with open(metrics_file, 'a', newline='') as f:
+            writer_csv = csv.writer(f)
+            writer_csv.writerow([epoch, csrnet_loss, classifier_loss, classifier_acc, mae, rmse, classifier_val_acc])
+        
         # Update learning rate schedulers
         csrnet_scheduler.step(csrnet_loss)
         classifier_scheduler.step(classifier_loss)
@@ -295,6 +345,7 @@ def main(args):
         # Save best model
         if mae < best_mae:
             best_mae = mae
+            patience_counter = 0
             print(f"New best MAE: {best_mae:.2f}, saving models...")
             
             # Save CSRNet
@@ -302,6 +353,11 @@ def main(args):
             
             # Save density classifier
             torch.save(classifier_model.state_dict(), os.path.join(args.output_dir, 'classifier_best.pth'))
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"Early stopping triggered after {epoch} epochs. No improvement for {patience} epochs.")
+                break
         
         # Save checkpoint every few epochs
         if epoch % args.save_interval == 0:
@@ -375,7 +431,56 @@ def main(args):
         )
         print(f"Density classifier exported to {classifier_path}")
     
+    # Create visualization of training metrics
+    plot_training_metrics(metrics_file, os.path.join(args.output_dir, 'training_metrics_plot.png'))
+    
     print("All done!")
+
+
+def plot_training_metrics(csv_file, output_file):
+    """
+    Create visualization of training metrics from CSV file
+    """
+    # Read metrics
+    df = pd.read_csv(csv_file)
+    
+    # Create figure with multiple subplots
+    fig, axs = plt.subplots(2, 2, figsize=(15, 10))
+    
+    # Plot CSRNet Loss and Classifier Loss
+    axs[0, 0].plot(df['Epoch'], df['CSRNet_Loss'], 'b-', label='CSRNet Loss')
+    axs[0, 0].plot(df['Epoch'], df['Classifier_Loss'], 'r-', label='Classifier Loss')
+    axs[0, 0].set_title('Training Loss')
+    axs[0, 0].set_xlabel('Epoch')
+    axs[0, 0].set_ylabel('Loss')
+    axs[0, 0].legend()
+    axs[0, 0].grid(True)
+    
+    # Plot Classifier Accuracy
+    axs[0, 1].plot(df['Epoch'], df['Classifier_Accuracy'], 'g-', label='Train')
+    axs[0, 1].plot(df['Epoch'], df['Classifier_Val_Accuracy'], 'g--', label='Val')
+    axs[0, 1].set_title('Classifier Accuracy')
+    axs[0, 1].set_xlabel('Epoch')
+    axs[0, 1].set_ylabel('Accuracy (%)')
+    axs[0, 1].legend()
+    axs[0, 1].grid(True)
+    
+    # Plot MAE and RMSE
+    axs[1, 0].plot(df['Epoch'], df['MAE'], 'm-', label='MAE')
+    axs[1, 0].set_title('Mean Absolute Error')
+    axs[1, 0].set_xlabel('Epoch')
+    axs[1, 0].set_ylabel('MAE')
+    axs[1, 0].grid(True)
+    
+    axs[1, 1].plot(df['Epoch'], df['RMSE'], 'c-', label='RMSE')
+    axs[1, 1].set_title('Root Mean Squared Error')
+    axs[1, 1].set_xlabel('Epoch')
+    axs[1, 1].set_ylabel('RMSE')
+    axs[1, 1].grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(output_file)
+    print(f"Training metrics visualization saved to {output_file}")
 
 
 if __name__ == '__main__':
@@ -390,7 +495,7 @@ if __name__ == '__main__':
     # Training parameters
     parser.add_argument('--batch-size', type=int, default=8,
                         help='Batch size')
-    parser.add_argument('--epochs', type=int, default=100,
+    parser.add_argument('--epochs', type=int, default=30,
                         help='Number of epochs')
     parser.add_argument('--lr', type=float, default=1e-5,
                         help='Learning rate')
@@ -398,15 +503,17 @@ if __name__ == '__main__':
                         help='Device to use (cuda:0, cuda:1, cpu, etc.)')
     parser.add_argument('--num-workers', type=int, default=4,
                         help='Number of workers for data loading')
-    parser.add_argument('--save-interval', type=int, default=10,
+    parser.add_argument('--save-interval', type=int, default=5,
                         help='Save checkpoint every N epochs')
+    parser.add_argument('--patience', type=int, default=5,
+                        help='Early stopping patience (default: 5 epochs)')
     
     # YOLOv8 parameters
     parser.add_argument('--train-yolo', action='store_true',
                         help='Whether to train YOLOv8')
     parser.add_argument('--yolo-model-size', type=str, default='n',
                         help='YOLOv8 model size (n, s, m, l, x)')
-    parser.add_argument('--yolo-epochs', type=int, default=50,
+    parser.add_argument('--yolo-epochs', type=int, default=15,
                         help='Number of epochs for YOLOv8 training')
     parser.add_argument('--yolo-img-size', type=int, default=640,
                         help='Image size for YOLOv8 training')

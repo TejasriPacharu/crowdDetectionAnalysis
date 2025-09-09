@@ -169,6 +169,36 @@ class UCFQNRFDataset(Dataset):
         }
 
 
+def custom_collate_fn(batch):
+    """
+    Custom collate function to handle variable-sized tensors
+    
+    Args:
+        batch: List of samples from dataset
+        
+    Returns:
+        Batched tensors with padding for variable-sized data
+    """
+    # Convert batch from list of dicts to dict of lists
+    keys = batch[0].keys()
+    collated_batch = {key: [] for key in keys}
+    
+    for sample in batch:
+        for key in keys:
+            collated_batch[key].append(sample[key])
+    
+    # Stack fixed-size tensors
+    collated_batch['image'] = torch.stack(collated_batch['image'], 0)
+    collated_batch['density_map'] = torch.stack(collated_batch['density_map'], 0)
+    collated_batch['count'] = torch.tensor(collated_batch['count'])
+    collated_batch['is_dense'] = torch.tensor(collated_batch['is_dense'])
+    
+    # Keep variable-sized data as lists
+    # We don't stack 'yolo_targets' as they have variable sizes
+    
+    return collated_batch
+
+
 def get_dataloaders(root_dir, batch_size=8, num_workers=4, density_map_size=(384, 384)):
     """
     Create data loaders for training and testing
@@ -219,7 +249,8 @@ def get_dataloaders(root_dir, batch_size=8, num_workers=4, density_map_size=(384
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
-        drop_last=True
+        drop_last=True,
+        collate_fn=custom_collate_fn
     )
     
     test_loader = DataLoader(
@@ -227,7 +258,8 @@ def get_dataloaders(root_dir, batch_size=8, num_workers=4, density_map_size=(384
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=True,
+        collate_fn=custom_collate_fn
     )
     
     return train_loader, test_loader

@@ -79,6 +79,11 @@ class YOLOCounter:
         Returns:
             Training metrics
         """
+        # Ensure device is valid
+        if device == 'cuda:0' and not torch.cuda.is_available():
+            print("CUDA not available, falling back to CPU")
+            device = 'cpu'
+            
         # Train the model
         results = self.model.train(
             data=data_yaml,
@@ -121,6 +126,9 @@ def prepare_yolo_dataset(dataset, output_dir):
     Returns:
         Path to data YAML file
     """
+    # Convert output_dir to absolute path
+    output_dir = os.path.abspath(output_dir)
+    
     # Create directories
     os.makedirs(os.path.join(output_dir, 'images', 'train'), exist_ok=True)
     os.makedirs(os.path.join(output_dir, 'images', 'val'), exist_ok=True)
@@ -137,6 +145,8 @@ def prepare_yolo_dataset(dataset, output_dir):
         
         # Get image path and YOLO targets
         img_path = data['image_path']
+        # Convert to absolute path
+        img_path = os.path.abspath(img_path)
         yolo_targets = data['yolo_targets'].numpy()
         
         # Determine if this is a training or validation sample (80/20 split)
@@ -147,9 +157,13 @@ def prepare_yolo_dataset(dataset, output_dir):
         img_filename = os.path.basename(img_path)
         dst_img_path = os.path.join(output_dir, 'images', split, img_filename)
         
-        # Create symbolic link to original image
-        if not os.path.exists(dst_img_path):
+        # Create symbolic link to original image, handling existing links
+        try:
+            if os.path.exists(dst_img_path) or os.path.islink(dst_img_path):
+                os.remove(dst_img_path)  # Remove existing file/symlink
             os.symlink(img_path, dst_img_path)
+        except Exception as e:
+            print(f"Warning: Could not create symlink from {img_path} to {dst_img_path}: {e}")
         
         # Create YOLO label file
         label_filename = img_filename.replace('.jpg', '.txt')
